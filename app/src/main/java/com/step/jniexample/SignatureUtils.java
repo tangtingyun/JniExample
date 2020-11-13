@@ -1,5 +1,7 @@
 package com.step.jniexample;
 
+import android.content.Context;
+
 public class SignatureUtils {
 
 
@@ -13,4 +15,6 @@ public class SignatureUtils {
      * @return
      */
     public static native String signatureParams(String params);
+
+    public static native void signatureVerify(Context context);
 }

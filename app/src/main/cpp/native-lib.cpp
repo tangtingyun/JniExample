@@ -3,6 +3,18 @@
 #include "md5.h"
 #include "utils/androidlog.h"
 
+#include <android/bitmap.h>
+#include <malloc.h>
+
+extern "C"
+{
+#include "jpeglib.h"
+}
+#define true 1
+#define false 0
+
+typedef uint8_t BYTE;
+
 // 额外附加的字符串
 static const char *EXTRA_SIGNATURE = "JNI_PINK";
 // 校验签名
@@ -104,3 +116,120 @@ Java_com_step_jniexample_SignatureUtils_signatureVerify(JNIEnv *env, jclass claz
     // 签名认证成功
     is_verify = 1;
 }
+
+
+// jpeg    源码找到解决方案
+int writeImg(BYTE *data, const char *path, int w, int h) {
+
+//jpeg引擎   绕过 skia  来实现压缩
+//信使
+    struct jpeg_compress_struct jpeg_struct;
+    //    设置错误处理信息
+    jpeg_error_mgr err;
+    jpeg_struct.err = jpeg_std_error(&err);
+//    给结构体分配内存
+    jpeg_create_compress(&jpeg_struct);
+
+    FILE *file = fopen(path, "wb");
+
+    if (file == NULL) {
+        return 0;
+    }
+
+//    设置输出路径
+    jpeg_stdio_dest(&jpeg_struct, file);
+
+    jpeg_struct.image_width = w;
+    jpeg_struct.image_height = h;
+//    初始化  初始化
+//改成FALSE   ---》 开启hufuman算法
+    jpeg_struct.arith_code = FALSE;
+    jpeg_struct.optimize_coding = TRUE;
+    jpeg_struct.in_color_space = JCS_RGB;
+
+    jpeg_struct.input_components = 3;
+//    其他的设置默认
+    jpeg_set_defaults(&jpeg_struct);
+    jpeg_set_quality(&jpeg_struct, 20, true);
+    jpeg_start_compress(&jpeg_struct, TRUE);
+    JSAMPROW row_pointer[1];
+//    一行的rgb
+    int row_stride = w * 3;
+    while (jpeg_struct.next_scanline < h) {
+        row_pointer[0] = &data[jpeg_struct.next_scanline * w * 3];
+        jpeg_write_scanlines(&jpeg_struct, row_pointer, 1);
+    }
+    jpeg_finish_compress(&jpeg_struct);
+
+    jpeg_destroy_compress(&jpeg_struct);
+    fclose(file);
+
+    return JNI_TRUE;
+}
+
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_step_jniexample_CompressUtils_compress(JNIEnv *env, jobject thiz, jobject bitmap,
+                                                jstring path_) {
+//    jpeg  压缩---》    rggb
+//工厂整体搬迁  图片  zip   rar 1     分开打包搬迁2  每一个元数据 像素  1    r  g   b 2
+
+    const char *path = env->GetStringUTFChars(path_, 0);
+
+    LOGD("outfile path is %s", path);
+//     宽高
+    AndroidBitmapInfo bitmapInfo;
+    if (AndroidBitmap_getInfo(env, bitmap, &bitmapInfo) < 0) {
+        LOGD("AndroidBitmap_getInfo error");
+        env->ReleaseStringUTFChars(path_, path);
+        return false;
+    }
+    BYTE *pixels;
+    if (AndroidBitmap_lockPixels(env, bitmap, (void **) &pixels) < 0) {
+        LOGD("AndroidBitmap_lockPixels error");
+        env->ReleaseStringUTFChars(path_, path);
+        return false;
+    }
+    int h = bitmapInfo.height;
+    int w = bitmapInfo.width;
+//
+    BYTE *data, *tmpData;
+    data = (BYTE *) malloc(w * h * 3);
+    tmpData = data;
+    BYTE r, g, b;
+    int color;
+    for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+            color = *((int *) pixels);
+            r = ((color & 0x00FF0000) >> 16);
+            g = ((color & 0x0000FF00) >> 8);
+            b = ((color & 0x000000FF));
+
+            *data = b;
+            *(data + 1) = g;
+            *(data + 2) = r;
+            data += 3;
+            pixels += 4;
+        }
+    }
+    AndroidBitmap_unlockPixels(env, bitmap);
+    int result = writeImg(tmpData, path, w, h);
+
+    // 释放堆内存
+    free(tmpData);
+
+    env->ReleaseStringUTFChars(path_, path);
+
+    if (result == 0) {
+        return false;
+    } else {
+        return true;
+    }
+
+}
+
+
+
+
+
